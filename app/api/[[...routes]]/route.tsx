@@ -1,160 +1,123 @@
 /** @jsxImportSource frog/jsx */
 
-import { Button, Frog } from 'frog'
-import { devtools } from 'frog/dev'
-import { neynar } from 'frog/hubs'
-import { handle } from 'frog/next'
-import { serveStatic } from 'frog/serve-static'
-import path from 'path';
-import fs from 'fs/promises';
-import { Fan } from '../../utils/interface'
-import { getDisplayName, getTop10Fans, getUserPfpUrl, weightedRaffle, postLum0xTestFrameValidation } from '../../utils/helpers'
-import { createFan, getFan } from '@/app/utils/db/queries/fans';
-import { getLeaderboardImage } from '../../ui/leaderboard'
-import { getShareImage } from '../../ui/share'
-
-async function getRegularFontData() {
-  const fontPath = path.resolve('./public/fonts/Coinbase_Display-Regular-web-1.32.ttf');
-  const fontData = await fs.readFile(fontPath);
-  return fontData;
-}
-
-async function getBoldFontData() {
-  const fontPath = path.resolve('./public/fonts/Coinbase_Display-Bold-web-1.32.ttf');
-  const fontData = await fs.readFile(fontPath);
-  return fontData;
-}
+import { Button, Frog, TextInput } from "frog";
+import { devtools } from "frog/dev";
+import { neynar } from "frog/hubs";
+import { handle } from "frog/next";
+import { serveStatic } from "frog/serve-static";
+import { Participant } from "../../utils/interface";
+import {
+  getUserDisplayName,
+  getUserPfpUrl,
+  getUser,
+  postLum0xTestFrameValidation,
+} from "../../utils/helpers";
+import { getShareImage } from "../../ui/share";
 
 const app = new Frog({
-  assetsPath: '/',
-  basePath: '/api',
-  hub: neynar({ apiKey: process.env.NEYNAR_API_KEY ?? '' }),
-  title: 'Raffle among your fans',
-  imageAspectRatio: '1.91:1',
+  assetsPath: "/",
+  basePath: "/api",
+  hub: neynar({ apiKey: process.env.NEYNAR_API_KEY ?? "" }),
+  title: "Raffle among your fans",
+  imageAspectRatio: "1:1",
   imageOptions: {
-    height: 1910,
-    width: 1000,
-    fonts: [
-      {
-        name: 'coinbase',
-        data: await getRegularFontData(),
-        style: 'normal',
-        weight: 400,
-      },
-      {
-        name: 'coinbase',
-        data: await getBoldFontData(),
-        style: 'normal',
-        weight: 700,
-      },
-    ]
+    height: 800,
+    width: 800,
   },
-})
+  initialState: {
+    channel: "",
+    startDate: "",
+    limit: 25,
+  },
+});
 
-// Uncomment to use Edge Runtime
-// export const runtime = 'edge'
+app.frame("/", async (c) => {
+  const fid = c.frameData?.fid;
+  await postLum0xTestFrameValidation(Number(fid), "app");
 
-app.frame('/', (c) => {
   return c.res({
-    image: '/Default.png',
+    image: "/Default.png",
+    intents: [<Button action="/channel">Setting</Button>],
+  });
+});
+
+app.frame("/channel", async (c) => {
+  const fid = c.frameData?.fid;
+  await postLum0xTestFrameValidation(Number(fid), "channel");
+
+  return c.res({
+    image: "/Steps.png",
     intents: [
-      <Button action='/raffle'>Raffle!</Button>,
-      <Button action='/fans'>My Top 10 Fans</Button>,
+      <TextInput placeholder="Enter channel" />,
+      <Button action="/">Back</Button>,
+      <Button action="/start-date">Next</Button>,
     ],
-  })
-})
+  });
+});
 
-app.frame('/raffle', async (c) => {
-  const fid = c.frameData?.fid
+app.frame("/start-date", async (c) => {
+  const fid = c.frameData?.fid;
+  await postLum0xTestFrameValidation(Number(fid), "start-date");
 
-  await postLum0xTestFrameValidation(Number(fid), 'raffle')
-
-  const winner: Fan = await weightedRaffle(Number(fid))
-
-  const fanDocRef = await createFan(winner)
-
-  const frameUrl = `${process.env.BASE_URL}/api/share/${fanDocRef.id}`
-  const message = `Winner of the raffle is...!!`
-  const urlMessage = message.replace(/ /g, '%20')
-  const shareUrl = `https://warpcast.com/~/compose?text=${urlMessage}&embeds[]=${frameUrl}`
+  c.deriveState((previousState: any) => {
+    previousState.channel = c.inputText;
+  });
 
   return c.res({
-    image: '/Result.png',
+    image: "/Steps.png",
     intents: [
-      <Button.Link href={shareUrl}>Share</Button.Link>,
-      <Button action='/'>Back</Button>,
+      <TextInput placeholder="Enter Start Date... 2024-09-01" />,
+      <Button action="/channel">Back</Button>,
+      <Button action="/limit">Next</Button>,
     ],
-  })
-})
+  });
+});
 
-app.frame('/fans', async (c) => {
-  const fid = c.frameData?.fid
-  if (!fid) {
-    return c.error({ message: 'Invalid fid', statusCode: 404 })
-  }
+app.frame("/limit", async (c) => {
+  const fid = c.frameData?.fid;
+  await postLum0xTestFrameValidation(Number(fid), "limit");
 
-  await postLum0xTestFrameValidation(Number(fid), 'fans')
+  c.deriveState((previousState: any) => {
+    previousState.endDate = c.inputText;
+  });
 
   return c.res({
-    image: `/leaderboard-image/${fid}`,
+    image: "/Steps.png",
     intents: [
-      <Button action='/raffle'>Raffle</Button>,
-      <Button action='/'>Back</Button>,
+      <TextInput placeholder="Enter limit... default: 25" />,
+      <Button action="/end-date">Back</Button>,
+      <Button action="/raffle">Next</Button>,
     ],
-  })
-})
+  });
+});
 
-app.frame('/share/:id', async (c) => {
-  const viewerFid = c.frameData?.fid
-  const id = c.req.param('id')
-  const fanDoc = await getFan(id)
+app.frame("/raffle", (c) => {
+  c.deriveState((previousState: any) => {
+    previousState.limit = parseInt(c.inputText ? c.inputText : "25", 10);
+  });
 
-  await postLum0xTestFrameValidation(Number(viewerFid), 'share')
-
-  const { fid, ranks, score, reactions, recasts } = fanDoc.data() as Fan
-  const displayName = await getDisplayName(String(fid))
-  const pfpUrl = await getUserPfpUrl(fid)
   return c.res({
-    image: (
-      getShareImage(ranks, score, reactions, recasts, displayName[0], pfpUrl)
-    ),
+    image: "/Default.png",
     intents: [
-      <Button action='/raffle'>Raffle</Button>,
-      <Button action='/fans'>My Top 10 Fans</Button>,
+      <Button action="/limit">Back</Button>,
+      <Button action="/result">Raffle!</Button>,
     ],
-  })
-})
+  });
+});
 
-app.image('/leaderboard-image/:fid', async (c) => {
-  const fid = c.req.param('fid')
-  if (fid == undefined) {
-    return c.res({
-      image: (
-        <img src="/Error.png" />
-      ),
-    })
-  }
-  const top10Fans: Fan[] = await getTop10Fans(Number(fid))
+app.frame("/result", async (c: any) => {
+  const { channel, startDate, limit } = c.previousState;
+  const winner: Participant = await getUser(channel, startDate, limit);
+  const displayName = await getUserDisplayName(winner.fid);
+  const pfpUrl = await getUserPfpUrl(winner.fid);
+
   return c.res({
-    image: (getLeaderboardImage(top10Fans))
-  })
-})
+    image: getShareImage(displayName, pfpUrl),
+    intents: [<Button action="/">Home</Button>],
+  });
+});
 
-devtools(app, { serveStatic })
+devtools(app, { serveStatic });
 
-export const GET = handle(app)
-export const POST = handle(app)
-
-// NOTE: That if you are using the devtools and enable Edge Runtime, you will need to copy the devtools
-// static assets to the public folder. You can do this by adding a script to your package.json:
-// ```json
-// {
-//   scripts: {
-//     "copy-static": "cp -r ./node_modules/frog/_lib/ui/.frog ./public/.frog"
-//   }
-// }
-// ```
-// Next, you'll want to set up the devtools to use the correct assets path:
-// ```ts
-// devtools(app, { assetsPath: '/.frog' })
-// ```
+export const GET = handle(app);
+export const POST = handle(app);
